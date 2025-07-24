@@ -10,32 +10,32 @@ This project demonstrates a **production-ready 3-tier microservice-based Voting 
 ┌─────────────────────────────────────────────────────────────────────┐
 │                    3-Tier Microservice Architecture                 │
 ├─────────────────────────────────────────────────────────────────────┤
-│  Tier 1: Presentation Layer (Frontend)                             │
-│  ┌─────────────────────────────────────────────────────────────┐   │
-│  │  React.js Application                                       │   │
-│  │  • Modern UI with Tailwind CSS                             │   │
-│  │  • Responsive design                                       │   │
-│  │  • Real-time results                                       │   │
-│  │  • Vote casting interface                                  │   │
-│  └─────────────────────────────────────────────────────────────┘   │
+│  Tier 1: Presentation Layer (Frontend)                              │
+│  ┌──────────────────────────────────────────────────────────────┐   │
+│  │  React.js Application                                        │   │
+│  │  • Modern UI with Tailwind CSS                               │   │
+│  │  • Responsive design                                         │   │
+│  │  • Real-time results                                         │   │
+│  │  • Vote casting interface                                    │   │
+│  └──────────────────────────────────────────────────────────────┘   │
 ├─────────────────────────────────────────────────────────────────────┤
-│  Tier 2: Application Layer (Backend)                               │
-│  ┌─────────────────────────────────────────────────────────────┐   │
-│  │  FastAPI Backend Service                                   │   │
-│  │  • RESTful API endpoints                                   │   │
-│  │  • Vote processing logic                                   │   │
-│  │  • Data validation                                         │   │
-│  │  • Authentication & authorization                          │   │
-│  └─────────────────────────────────────────────────────────────┘   │
+│  Tier 2: Application Layer (Backend)                                │
+│  ┌──────────────────────────────────────────────────────────────┐   │
+│  │  FastAPI Backend Service                                     │   │
+│  │  • RESTful API endpoints                                     │   │
+│  │  • Vote processing logic                                     │   │
+│  │  • Data validation                                           │   │
+│  │  • Authentication & authorization                            │   │
+│  └──────────────────────────────────────────────────────────────┘   │
 ├─────────────────────────────────────────────────────────────────────┤
-│  Tier 3: Data Layer (Database)                                     │
-│  ┌─────────────────────────────────────────────────────────────┐   │
-│  │  MongoDB Database                                           │   │
-│  │  • Poll storage                                            │   │
-│  │  • Vote records                                            │   │
-│  │  • User sessions                                           │   │
-│  │  • Real-time aggregation                                   │   │
-│  └─────────────────────────────────────────────────────────────┘   │
+│  Tier 3: Data Layer (Database)                                      │
+│  ┌──────────────────────────────────────────────────────────────┐   │
+│  │  MongoDB Database                                            │   │
+│  │  • Poll storage                                              │   │
+│  │  • Vote records                                              │   │
+│  │  • User sessions                                             │   │
+│  │  • Real-time aggregation                                     │   │
+│  └──────────────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 

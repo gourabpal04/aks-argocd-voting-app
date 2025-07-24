@@ -1,0 +1,85 @@
+version: '3.8'
+
+services:
+  # MongoDB Database (Tier 3)
+  mongodb:
+    image: mongo:7.0
+    container_name: voting-app-mongodb
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: password123
+      MONGO_INITDB_DATABASE: voting_app
+    volumes:
+      - mongodb_data:/data/db
+      - ./database/init.js:/docker-entrypoint-initdb.d/init.js:ro
+    networks:
+      - voting-network
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Backend Service (Tier 2)
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: voting-app-backend
+    restart: unless-stopped
+    ports:
+      - "8001:8001"
+    environment:
+      - MONGO_URL=mongodb://admin:password123@mongodb:27017/voting_app?authSource=admin
+      - DATABASE_NAME=voting_app
+      - JWT_SECRET_KEY=your-super-secret-jwt-key-here
+      - ENVIRONMENT=development
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    networks:
+      - voting-network
+    volumes:
+      - ./backend/app:/app/app
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Frontend Service (Tier 1)
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: voting-app-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - REACT_APP_BACKEND_URL=http://localhost:8001
+      - REACT_APP_API_BASE_URL=http://localhost:8001/api
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - voting-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  mongodb_data:
+    driver: local
+
+networks:
+  voting-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16

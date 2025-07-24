@@ -400,5 +400,3 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - [Azure DevOps](https://azure.microsoft.com/en-us/services/devops/) for CI/CD pipelines
 
 ---
-
-**🎯 This project successfully demonstrates DevOps Project-37 requirements with a modern, scalable, and production-ready 3-tier microservice voting application!**

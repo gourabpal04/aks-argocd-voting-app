@@ -1,4 +1,4 @@
-# DevOps Project-37: 3-Tier Microservice Voting App
+# DevOps Project: 3-Tier Microservice Voting App
 
 ## 🎯 Project Overview
 

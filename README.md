@@ -398,5 +398,3 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - [Tailwind CSS](https://tailwindcss.com/) for the styling framework
 - [ArgoCD](https://argoproj.github.io/cd/) for GitOps capabilities
 - [Azure DevOps](https://azure.microsoft.com/en-us/services/devops/) for CI/CD pipelines
-
----

@@ -1,0 +1,225 @@
+# Azure DevOps Pipeline for Frontend Service
+# DevOps Project-37: 3-Tier Microservice Voting App
+
+trigger:
+  branches:
+    include:
+    - main
+    - develop
+  paths:
+    include:
+    - frontend/*
+    - .azure-pipelines/frontend-pipeline.yml
+
+pr:
+  branches:
+    include:
+    - main
+  paths:
+    include:
+    - frontend/*
+
+variables:
+  # Container registry variables
+  containerRegistry: 'voting-app-acr'
+  imageRepository: 'voting-app-frontend'
+  dockerfilePath: 'frontend/Dockerfile'
+  tag: '$(Build.BuildNumber)'
+  
+  # Kubernetes variables
+  kubernetesNamespace: 'voting-app'
+  kubernetesConnection: 'aks-voting-app'
+
+stages:
+- stage: BuildAndTest
+  displayName: 'Build and Test Frontend'
+  jobs:
+  - job: Build
+    displayName: 'Build Frontend Application'
+    pool:
+      vmImage: 'ubuntu-latest'
+    
+    steps:
+    - checkout: self
+      fetchDepth: 0
+    
+    # Setup Node.js
+    - task: NodeTool@0
+      displayName: 'Setup Node.js'
+      inputs:
+        versionSpec: '18.x'
+    
+    # Cache node modules
+    - task: Cache@2
+      displayName: 'Cache node modules'
+      inputs:
+        key: 'npm | "$(Agent.OS)" | frontend/package-lock.json'
+        restoreKeys: |
+          npm | "$(Agent.OS)"
+          npm
+        path: '$(System.DefaultWorkingDirectory)/frontend/node_modules'
+    
+    # Install dependencies
+    - script: |
+        cd frontend
+        npm ci
+      displayName: 'Install dependencies'
+    
+    # Run linting
+    - script: |
+        cd frontend
+        npm run lint || echo "Linting failed, continuing..."
+      displayName: 'Run ESLint'
+      continueOnError: true
+    
+    # Run tests
+    - script: |
+        cd frontend
+        npm test -- --coverage --watchAll=false
+      displayName: 'Run tests'
+      continueOnError: true
+    
+    # Build application
+    - script: |
+        cd frontend
+        npm run build
+      displayName: 'Build application'
+      env:
+        REACT_APP_BACKEND_URL: 'https://voting-app-api.example.com'
+        REACT_APP_API_BASE_URL: 'https://voting-app-api.example.com/api'
+    
+    # Publish test results
+    - task: PublishTestResults@2
+      displayName: 'Publish test results'
+      condition: succeededOrFailed()
+      inputs:
+        testResultsFiles: 'frontend/test-results.xml'
+        testRunTitle: 'Frontend Tests'
+    
+    # Publish code coverage
+    - task: PublishCodeCoverageResults@1
+      displayName: 'Publish code coverage'
+      condition: succeededOrFailed()
+      inputs:
+        codeCoverageTool: 'Cobertura'
+        summaryFileLocation: 'frontend/coverage/cobertura-coverage.xml'
+        reportDirectory: 'frontend/coverage'
+    
+    # Build and push Docker image
+    - task: Docker@2
+      displayName: 'Build and push Docker image'
+      inputs:
+        containerRegistry: '$(containerRegistry)'
+        repository: '$(imageRepository)'
+        command: 'buildAndPush'
+        Dockerfile: '$(dockerfilePath)'
+        buildContext: 'frontend'
+        tags: |
+          $(tag)
+          latest
+
+- stage: Deploy
+  displayName: 'Deploy to AKS'
+  dependsOn: BuildAndTest
+  condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+  
+  jobs:
+  - deployment: DeployToAKS
+    displayName: 'Deploy Frontend to AKS'
+    pool:
+      vmImage: 'ubuntu-latest'
+    environment: 'voting-app-production'
+    
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - checkout: self
+          
+          # Download secure files
+          - task: DownloadSecureFile@1
+            displayName: 'Download kubeconfig'
+            name: kubeconfig
+            inputs:
+              secureFile: 'kubeconfig'
+          
+          # Setup kubectl
+          - task: KubectlInstaller@0
+            displayName: 'Install kubectl'
+            inputs:
+              kubectlVersion: 'latest'
+          
+          # Update Kubernetes manifests
+          - task: replacetokens@5
+            displayName: 'Replace tokens in manifests'
+            inputs:
+              rootDirectory: 'k8s/base'
+              targetFiles: 'frontend.yaml'
+              encoding: 'auto'
+              tokenPattern: 'custom'
+              tokenPrefix: '__'
+              tokenSuffix: '__'
+              verbosity: 'detailed'
+              variables: |
+                IMAGE_TAG=$(tag)
+                CONTAINER_REGISTRY=$(containerRegistry).azurecr.io
+          
+          # Update image in ArgoCD (GitOps approach)
+          - script: |
+              # Update the image tag in the Kubernetes manifest
+              sed -i 's|voting-app-frontend:.*|voting-app-frontend:$(tag)|g' k8s/base/frontend.yaml
+              
+              # Commit and push changes for GitOps
+              git config --global user.email "devops@company.com"
+              git config --global user.name "Azure DevOps"
+              git add k8s/base/frontend.yaml
+              git commit -m "Update frontend image to $(tag) [skip ci]"
+              git push origin main
+            displayName: 'Update image tag for GitOps'
+            env:
+              SYSTEM_ACCESSTOKEN: $(System.AccessToken)
+          
+          # Verify deployment (optional direct kubectl check)
+          - task: Kubernetes@1
+            displayName: 'Check deployment status'
+            inputs:
+              connectionType: 'kubernetesServiceConnection'
+              kubernetesServiceConnection: '$(kubernetesConnection)'
+              namespace: '$(kubernetesNamespace)'
+              command: 'get'
+              arguments: 'deployments frontend -o wide'
+
+- stage: PostDeploy
+  displayName: 'Post-Deployment Tasks'
+  dependsOn: Deploy
+  condition: succeeded()
+  
+  jobs:
+  - job: HealthCheck
+    displayName: 'Health Check and Notifications'
+    pool:
+      vmImage: 'ubuntu-latest'
+    
+    steps:
+    # Health check
+    - script: |
+        echo "Running health checks..."
+        # Add your health check logic here
+        curl -f https://voting-app.example.com || exit 1
+      displayName: 'Health check'
+      continueOnError: true
+    
+    # Send Teams notification
+    - task: MSTeamsPostMessage@0
+      displayName: 'Send Teams notification'
+      inputs:
+        webhookUrl: '$(TeamsWebhookUrl)'
+        message: |
+          🚀 **Frontend Deployment Successful**
+          
+          **Build:** $(Build.BuildNumber)
+          **Branch:** $(Build.SourceBranchName)
+          **Commit:** $(Build.SourceVersion)
+          **Environment:** Production
+          
+          [View Application](https://voting-app.example.com)

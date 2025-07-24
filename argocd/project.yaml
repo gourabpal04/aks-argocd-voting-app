@@ -1,0 +1,83 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: voting-app-project
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  description: "3-Tier Microservice Voting Application Project"
+  
+  # Source repositories
+  sourceRepos:
+  - '*'
+  
+  # Destination clusters and namespaces
+  destinations:
+  - namespace: voting-app
+    server: https://kubernetes.default.svc
+  - namespace: argocd
+    server: https://kubernetes.default.svc
+  
+  # Cluster resource allow list
+  clusterResourceWhitelist:
+  - group: ''
+    kind: Namespace
+  - group: 'rbac.authorization.k8s.io'
+    kind: ClusterRole
+  - group: 'rbac.authorization.k8s.io'
+    kind: ClusterRoleBinding
+  
+  # Namespace resource allow list
+  namespaceResourceWhitelist:
+  - group: ''
+    kind: ConfigMap
+  - group: ''
+    kind: Secret
+  - group: ''
+    kind: Service
+  - group: ''
+    kind: ServiceAccount
+  - group: ''
+    kind: PersistentVolumeClaim
+  - group: 'apps'
+    kind: Deployment
+  - group: 'apps'
+    kind: ReplicaSet
+  - group: 'networking.k8s.io'
+    kind: Ingress
+  - group: 'autoscaling'
+    kind: HorizontalPodAutoscaler
+  
+  # Project roles
+  roles:
+  # Read-only role for developers
+  - name: readonly
+    description: "Read-only access to voting app resources"
+    policies:
+    - p, proj:voting-app-project:readonly, applications, get, voting-app-project/*, allow
+    - p, proj:voting-app-project:readonly, applications, sync, voting-app-project/*, deny
+    groups:
+    - voting-app-developers
+  
+  # Admin role for DevOps team
+  - name: admin
+    description: "Full access to voting app resources"
+    policies:
+    - p, proj:voting-app-project:admin, applications, *, voting-app-project/*, allow
+    - p, proj:voting-app-project:admin, repositories, *, *, allow
+    groups:
+    - voting-app-admins
+  
+  # Sync policies
+  syncWindows:
+  - kind: allow
+    schedule: "0 8 * * 1-5"  # Allow sync weekdays 8 AM
+    duration: 8h
+    applications:
+    - voting-app-*
+  - kind: deny
+    schedule: "0 22 * * *"   # Deny sync from 10 PM
+    duration: 6h
+    applications:
+    - voting-app-*

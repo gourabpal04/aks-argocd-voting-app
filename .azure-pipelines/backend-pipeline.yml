@@ -1,0 +1,272 @@
+# Azure DevOps Pipeline for Backend Service
+# DevOps Project-37: 3-Tier Microservice Voting App
+
+trigger:
+  branches:
+    include:
+    - main
+    - develop
+  paths:
+    include:
+    - backend/*
+    - .azure-pipelines/backend-pipeline.yml
+
+pr:
+  branches:
+    include:
+    - main
+  paths:
+    include:
+    - backend/*
+
+variables:
+  # Container registry variables
+  containerRegistry: 'voting-app-acr'
+  imageRepository: 'voting-app-backend'
+  dockerfilePath: 'backend/Dockerfile'
+  tag: '$(Build.BuildNumber)'
+  
+  # Kubernetes variables
+  kubernetesNamespace: 'voting-app'
+  kubernetesConnection: 'aks-voting-app'
+
+stages:
+- stage: BuildAndTest
+  displayName: 'Build and Test Backend'
+  jobs:
+  - job: Build
+    displayName: 'Build Backend API'
+    pool:
+      vmImage: 'ubuntu-latest'
+    
+    steps:
+    - checkout: self
+      fetchDepth: 0
+    
+    # Setup Python
+    - task: UsePythonVersion@0
+      displayName: 'Setup Python'
+      inputs:
+        versionSpec: '3.11'
+        addToPath: true
+    
+    # Cache pip dependencies
+    - task: Cache@2
+      displayName: 'Cache pip dependencies'
+      inputs:
+        key: 'python | "$(Agent.OS)" | backend/requirements.txt'
+        restoreKeys: |
+          python | "$(Agent.OS)"
+          python
+        path: '$(Pipeline.Workspace)/.pip'
+    
+    # Install dependencies
+    - script: |
+        cd backend
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pytest pytest-cov black flake8 bandit safety
+      displayName: 'Install dependencies'
+    
+    # Code formatting check
+    - script: |
+        cd backend
+        black --check app/ || echo "Code formatting issues found"
+      displayName: 'Check code formatting (Black)'
+      continueOnError: true
+    
+    # Linting
+    - script: |
+        cd backend
+        flake8 app/ --max-line-length=88 --ignore=E203,E501 || echo "Linting issues found"
+      displayName: 'Run linting (Flake8)'
+      continueOnError: true
+    
+    # Security scan
+    - script: |
+        cd backend
+        bandit -r app/ -f json -o bandit-report.json || echo "Security issues found"
+        safety check --json --output safety-report.json || echo "Vulnerability issues found"
+      displayName: 'Security scan'
+      continueOnError: true
+    
+    # Run tests
+    - script: |
+        cd backend
+        python -m pytest --cov=app --cov-report=xml --cov-report=html --junitxml=test-results.xml
+      displayName: 'Run tests'
+      continueOnError: true
+    
+    # Publish test results
+    - task: PublishTestResults@2
+      displayName: 'Publish test results'
+      condition: succeededOrFailed()
+      inputs:
+        testResultsFiles: 'backend/test-results.xml'
+        testRunTitle: 'Backend API Tests'
+    
+    # Publish code coverage
+    - task: PublishCodeCoverageResults@1
+      displayName: 'Publish code coverage'
+      condition: succeededOrFailed()
+      inputs:
+        codeCoverageTool: 'Cobertura'
+        summaryFileLocation: 'backend/coverage.xml'
+        reportDirectory: 'backend/htmlcov'
+    
+    # Build and push Docker image
+    - task: Docker@2
+      displayName: 'Build and push Docker image'
+      inputs:
+        containerRegistry: '$(containerRegistry)'
+        repository: '$(imageRepository)'
+        command: 'buildAndPush'
+        Dockerfile: '$(dockerfilePath)'
+        buildContext: 'backend'
+        tags: |
+          $(tag)
+          latest
+    
+    # Container image vulnerability scan
+    - task: AzureContainerApps@1
+      displayName: 'Scan container image'
+      inputs:
+        azureSubscription: 'Azure-Subscription'
+        imageToDeploy: '$(containerRegistry).azurecr.io/$(imageRepository):$(tag)'
+        vulnerabilityScanning: true
+      continueOnError: true
+
+- stage: Deploy
+  displayName: 'Deploy to AKS'
+  dependsOn: BuildAndTest
+  condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+  
+  jobs:
+  - deployment: DeployToAKS
+    displayName: 'Deploy Backend to AKS'
+    pool:
+      vmImage: 'ubuntu-latest'
+    environment: 'voting-app-production'
+    
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - checkout: self
+          
+          # Download secure files
+          - task: DownloadSecureFile@1
+            displayName: 'Download kubeconfig'
+            name: kubeconfig
+            inputs:
+              secureFile: 'kubeconfig'
+          
+          # Setup kubectl
+          - task: KubectlInstaller@0
+            displayName: 'Install kubectl'
+            inputs:
+              kubectlVersion: 'latest'
+          
+          # Run database migrations (if needed)
+          - script: |
+              echo "Running database migrations..."
+              # Add your migration logic here
+              # kubectl exec -n voting-app deployment/backend -- python manage.py migrate
+            displayName: 'Database migrations'
+            continueOnError: true
+          
+          # Update Kubernetes manifests
+          - task: replacetokens@5
+            displayName: 'Replace tokens in manifests'
+            inputs:
+              rootDirectory: 'k8s/base'
+              targetFiles: 'backend.yaml'
+              encoding: 'auto'
+              tokenPattern: 'custom'
+              tokenPrefix: '__'
+              tokenSuffix: '__'
+              verbosity: 'detailed'
+              variables: |
+                IMAGE_TAG=$(tag)
+                CONTAINER_REGISTRY=$(containerRegistry).azurecr.io
+          
+          # Update image tag for GitOps
+          - script: |
+              # Update the image tag in the Kubernetes manifest
+              sed -i 's|voting-app-backend:.*|voting-app-backend:$(tag)|g' k8s/base/backend.yaml
+              
+              # Commit and push changes for GitOps
+              git config --global user.email "devops@company.com"
+              git config --global user.name "Azure DevOps"
+              git add k8s/base/backend.yaml
+              git commit -m "Update backend image to $(tag) [skip ci]"
+              git push origin main
+            displayName: 'Update image tag for GitOps'
+            env:
+              SYSTEM_ACCESSTOKEN: $(System.AccessToken)
+          
+          # Verify deployment
+          - task: Kubernetes@1
+            displayName: 'Check deployment status'
+            inputs:
+              connectionType: 'kubernetesServiceConnection'
+              kubernetesServiceConnection: '$(kubernetesConnection)'
+              namespace: '$(kubernetesNamespace)'
+              command: 'get'
+              arguments: 'deployments backend -o wide'
+          
+          # Run API health check
+          - script: |
+              echo "Waiting for deployment to be ready..."
+              kubectl wait --for=condition=available --timeout=300s deployment/backend -n voting-app
+              
+              # Get service endpoint
+              BACKEND_IP=$(kubectl get svc backend-service -n voting-app -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+              
+              # Health check
+              curl -f http://$BACKEND_IP:8001/api/health || exit 1
+            displayName: 'API health check'
+            continueOnError: true
+
+- stage: PostDeploy
+  displayName: 'Post-Deployment Tasks'
+  dependsOn: Deploy
+  condition: succeeded()
+  
+  jobs:
+  - job: IntegrationTests
+    displayName: 'Integration Tests'
+    pool:
+      vmImage: 'ubuntu-latest'
+    
+    steps:
+    # Run integration tests
+    - script: |
+        echo "Running integration tests..."
+        # Add your integration test logic here
+        # python -m pytest tests/integration/ --junitxml=integration-test-results.xml
+      displayName: 'Integration tests'
+      continueOnError: true
+    
+    # Load testing (optional)
+    - script: |
+        echo "Running load tests..."
+        # Add load testing with tools like locust or k6
+        # k6 run --duration 2m --vus 10 load-test.js
+      displayName: 'Load tests'
+      continueOnError: true
+    
+    # Send Slack notification
+    - task: SlackNotification@1
+      displayName: 'Send Slack notification'
+      inputs:
+        SlackApiToken: '$(SlackToken)'
+        Channel: '#devops'
+        Message: |
+          🚀 **Backend Deployment Successful**
+          
+          **Build:** $(Build.BuildNumber)
+          **Branch:** $(Build.SourceBranchName)
+          **Environment:** Production
+          
+          API Endpoint: https://voting-app-api.example.com/api/health

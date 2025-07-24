@@ -1,0 +1,112 @@
+# Shared pipeline steps for Azure DevOps
+# DevOps Project-37: 3-Tier Microservice Voting App
+
+parameters:
+- name: containerRegistry
+  type: string
+  default: 'voting-app-acr'
+- name: kubernetesConnection
+  type: string
+  default: 'aks-voting-app'
+- name: environment
+  type: string
+  default: 'production'
+
+steps:
+# Common security and compliance checks
+- task: SonarCloudPrepare@1
+  displayName: 'Prepare SonarCloud analysis'
+  inputs:
+    SonarCloud: 'SonarCloud'
+    organization: 'your-org'
+    scannerMode: 'CLI'
+    configMode: 'manual'
+    cliProjectKey: 'voting-app'
+    cliProjectName: 'Voting App'
+    cliSources: '.'
+
+# Docker security scan
+- task: AquaSecurityScanner@4
+  displayName: 'Aqua Security scan'
+  inputs:
+    image: '$(containerRegistry).azurecr.io/$(imageRepository):$(tag)'
+    scanner: 'trivy'
+    outputFormat: 'json'
+  continueOnError: true
+
+# Infrastructure as Code validation
+- script: |
+    # Validate Kubernetes manifests
+    kubectl --dry-run=client apply -f k8s/base/ || echo "Manifest validation failed"
+    
+    # Validate with kubeval
+    kubeval k8s/base/*.yaml || echo "Schema validation failed"
+    
+    # Security policy validation with OPA Gatekeeper
+    conftest verify --policy policies/ k8s/base/ || echo "Policy validation failed"
+  displayName: 'Validate Infrastructure as Code'
+  continueOnError: true
+
+# Backup current deployment (rollback preparation)
+- script: |
+    kubectl get deployment $SERVICE_NAME -n voting-app -o yaml > backup-$SERVICE_NAME-$(Build.BuildNumber).yaml
+  displayName: 'Backup current deployment'
+  env:
+    SERVICE_NAME: $(serviceName)
+
+# ArgoCD sync check
+- script: |
+    # Check if ArgoCD is managing this application
+    argocd app get voting-app --server argocd-server.argocd.svc.cluster.local --auth-token $ARGOCD_TOKEN
+    
+    # Trigger sync if needed
+    argocd app sync voting-app --server argocd-server.argocd.svc.cluster.local --auth-token $ARGOCD_TOKEN
+  displayName: 'ArgoCD sync'
+  env:
+    ARGOCD_TOKEN: $(ArgoCDToken)
+  continueOnError: true
+
+# Performance baseline check
+- script: |
+    echo "Running performance baseline checks..."
+    # Add performance testing logic
+    # k6 run --duration 30s --vus 5 performance-test.js > performance-report.json
+  displayName: 'Performance baseline'
+  continueOnError: true
+
+# Update monitoring dashboards
+- script: |
+    echo "Updating monitoring configurations..."
+    # Update Grafana dashboards
+    # Update Prometheus alerting rules
+    # curl -X POST http://grafana:3000/api/dashboards/db -d @dashboard.json
+  displayName: 'Update monitoring'
+  continueOnError: true
+
+# Cleanup old resources
+- script: |
+    echo "Cleaning up old deployments..."
+    # Keep only last 3 deployments
+    kubectl get replicasets -n voting-app --sort-by=.metadata.creationTimestamp | head -n -3 | awk '{print $1}' | xargs kubectl delete replicaset -n voting-app
+  displayName: 'Cleanup old resources'
+  continueOnError: true
+
+# Send notification to multiple channels
+- task: InvokeRESTAPI@1
+  displayName: 'Send webhook notification'
+  inputs:
+    connectionType: 'connectedServiceName'
+    serviceConnection: 'WebhookEndpoint'
+    method: 'POST'
+    headers: |
+      Content-Type: application/json
+    body: |
+      {
+        "project": "voting-app",
+        "environment": "${{ parameters.environment }}",
+        "build": "$(Build.BuildNumber)",
+        "status": "$(Agent.JobStatus)",
+        "service": "$(serviceName)",
+        "timestamp": "$(System.DateTime)"
+      }
+  condition: always()
